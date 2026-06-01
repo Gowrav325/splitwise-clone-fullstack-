@@ -6,6 +6,14 @@ Designed and refined for the **Spreetail Software Engineering Internship Assessm
 
 ---
 
+## 🔗 Live Interactive Evaluation Links
+
+Reviewers can access and test the deployed sandbox directly without any setup using the link below:
+
+*   **⚡ Deployed Live Sandbox Demo**: [Click here to view the Live App](https://ais-pre-74whr5whk3vgxd26wjrg4u-176767941465.asia-southeast1.run.app)
+
+---
+
 ## 🚀 Key Architectural Capabilities
 
 ### 1. Advanced Split Protocols Engine
