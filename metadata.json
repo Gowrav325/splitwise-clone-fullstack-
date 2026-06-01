@@ -1,0 +1,6 @@
+{
+  "name": "Splitwise Clone",
+  "description": "A full-stack Splitwise clone featuring group-expense splits, settled debts, a real-time expense chat, and detailed balance tracking powered by an Express SQLite backend.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
