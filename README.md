@@ -130,6 +130,18 @@ CREATE TABLE chats (
 
 ---
 
+## 🤖 AI Studio Collaboration Process
+
+This repository is the product of an intensive, structured **Human-in-the-Loop AI Collaboration** using **Google AI Studio (powered by the Gemini 3.5 Flash model)**. 
+
+Rather than jumping straight to boilerplate generation, the project adhered to a rigorous **Software Systems Engineering Protocol**:
+1. **The Interview Phase**: The AI acted as a Junior Engineer, interviewing the Product Manager (User) to establish clear goals, research Splitwise mechanics, and identify critical edge cases.
+2. **AI_CONTEXT.md Integration**: All architectural decisions, constraints, database schemas, and API routes were logged first in a project blueprint (`AI_CONTEXT.md`). This file served as the absolute "single source of truth".
+3. **Execution-First Build Plan**: Code was only written after compiling a precise sequence of changes in `BUILD_PLAN.md` based strictly on the approved `AI_CONTEXT.md`.
+4. **Iterative Verification**: Real-time linting, compilation audits, and sandbox validation tests were executed at every stage to ensure a robust, production-grade build.
+
+---
+
 ## 🏃 Local Setup & Development Instructions
 
 ### Prerequisites
