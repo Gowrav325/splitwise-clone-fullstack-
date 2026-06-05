@@ -35,6 +35,13 @@ To empower reviewers to test multi-party situations without tedious registration
 ### 5. Multi-Threaded Expense Chat Logging
 Every individual transaction holds a dedicated comment thread. The interface implements a **reactive 4-second short-polling mechanism** to emulate live WebSockets within secure sandboxed environments.
 
+### 6. AI-Powered Smart Receipt Scanning (Gemini API)
+Users can instantly upload or capture a photo of a receipt. The sandbox leverages the state-of-the-art **Gemini API** (`gemini-3.5-flash` with automatic retry logic and fallbacks to `gemini-flash-latest` and `gemini-3.1-flash-lite` to gracefully handle transient network or resource limits) to perform structured analysis. It contextually extracts:
+- **Merchant/Store Name** -> Auto-filled as the Expense Description.
+- **Total Amount Paid** -> Parsed numerically and placed as the Expense Amount.
+- **Purchase Date** -> Formatted into local date formats to align with the transaction ledger timeline.
+The "Add Expense" model opens automatically with pre-filled fields so users can select splitting weights and confirm with a single click.
+
 ---
 
 ## 🛠️ Tech Stack & Relational Database
@@ -159,8 +166,9 @@ Create a `.env` file in the root directory (refer to `.env.example` as a system 
 ```env
 SESSION_SECRET=your_custom_development_jwt_secret_phrase
 NODE_ENV=development
+GEMINI_API_KEY=your_google_gemini_api_key
 ```
-*(Note: If no secret is configured, the system will automatically fall back to a secure runtime-generated random secret for safety.)*
+*(Note: If no session secret is configured, the system will automatically fall back to a secure runtime-generated random secret for safety. The `GEMINI_API_KEY` is a server-only variable required for the smart Receipt Scanning action to operate successfully.)*
 
 ### 3. Launch Development Server
 Boot the integrated Express and Vite fast-reloading systems:
