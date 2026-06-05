@@ -8,6 +8,7 @@ import cookieParser from "cookie-parser";
 import jwt from "jsonwebtoken";
 import path from "path";
 import { getDb } from "./src/db";
+import { GoogleGenAI, Type } from "@google/genai";
 
 // Define custom Extend Request Typings
 interface AuthenticatedRequest extends Request {
@@ -28,7 +29,8 @@ async function run() {
   await getDb();
 
   // Basic Middlewares
-  app.use(express.json());
+  app.use(express.json({ limit: "50mb" }));
+  app.use(express.urlencoded({ limit: "50mb", extended: true }));
   app.use(cookieParser());
 
   // --- AUTHENTICATION MIDDLEWARE ---
@@ -318,12 +320,126 @@ async function run() {
     }
   });
 
+      // --- SCAN RECEIPT WITH GEMINI API ---
+  app.post("/api/scan-receipt", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+    const { imageBase64, mimeType } = req.body;
+
+    if (!imageBase64) {
+      res.status(400).json({ error: "Receipt image in base64 format is required." });
+      return;
+    }
+
+    try {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        res.status(400).json({ error: "GEMINI_API_KEY environment variable is required to scan receipts." });
+        return;
+      }
+
+      // Lazy initialization of Gemini client to prevent crash on startup if API key is missing
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            "User-Agent": "aistudio-build",
+          }
+        }
+      });
+
+      // Strip data uri preamble if present
+      const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, "");
+
+      const promptString = `Extract the following details from this receipt:
+1. Merchant/Store Name
+2. Total Amount Paid (numeric value only, e.g., 29.99)
+3. Date of purchase (formatted as YYYY-MM-DD, e.g., 2026-06-05)
+4. A standard single-word category that best fits this receipt, strictly chosen from: "utilities", "food", "transport", "travel", "entertainment", "recreation", "groceries", "home", "rent", "insurance", "other".
+`;
+
+      const scanParams = {
+        contents: [
+          {
+            inlineData: {
+              data: cleanBase64,
+              mimeType: mimeType || "image/jpeg"
+            }
+          },
+          {
+            text: promptString
+          }
+        ],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              merchant: { type: Type.STRING, description: "The name of the merchant/store" },
+              amount: { type: Type.NUMBER, description: "The total amount paid on the receipt, as a float number" },
+              date: { type: Type.STRING, description: "The date of the purchase in YYYY-MM-DD format" },
+              category: { type: Type.STRING, description: "One of standard categories: utilities, food, transport, travel, entertainment, recreation, groceries, home, rent, insurance, other" }
+            },
+            required: ["merchant", "amount", "date"]
+          }
+        }
+      };
+
+      // Helper for model retries and fallbacks
+      const modelsToTry = ["gemini-3.5-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
+      let response: any = null;
+      let lastErr: any = null;
+
+      for (const model of modelsToTry) {
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          try {
+            console.log(`Scanning receipt with ${model} (attempt ${attempt}/2)...`);
+            response = await ai.models.generateContent({
+              model,
+              ...scanParams
+            });
+            break; // Break the attempt loop if successful
+          } catch (err: any) {
+            lastErr = err;
+            const errStr = String(err.message || err);
+            const isTransient = errStr.includes("503") || 
+                                errStr.includes("demand") || 
+                                errStr.includes("UNAVAILABLE") || 
+                                errStr.includes("ResourceExhausted") ||
+                                errStr.includes("429");
+            if (isTransient) {
+              console.warn(`Attempt ${attempt} with ${model} failed due to demand/limits: ${errStr}. Retrying after delay...`);
+              await new Promise((resolve) => setTimeout(resolve, 1000));
+              continue;
+            } else {
+              break; // Don't retry different attempts if it's a client or structural error
+            }
+          }
+        }
+        if (response) break; // Break model loop if successful
+      }
+
+      if (!response && lastErr) {
+        throw lastErr;
+      }
+
+      const text = response?.text;
+      if (!text) {
+        throw new Error("Empty response from Gemini.");
+      }
+
+      const parsed = JSON.parse(text);
+      res.json({ result: parsed });
+    } catch (err: any) {
+      console.error("Gemini Scan Receipt Error:", err);
+      res.status(500).json({ error: "Failed to scan receipt: " + err.message });
+    }
+  });
+
   // --- EXPENSE ROUTES ---
 
   // 11. Add Expense
   app.post("/api/groups/:groupId/expenses", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
     const { groupId } = req.params;
-    const { description, amount, paidById, splitType, splits } = req.body;
+    const { description, amount, paidById, splitType, splits, createdAt } = req.body;
     // splits expected: Array of { userId: string, ratio: number (actual amount/percentage/share) }
 
     if (!description || !description.trim()) {
@@ -462,9 +578,11 @@ async function run() {
       // Execute insertions inside database Transaction
       await db.run("BEGIN TRANSACTION");
 
+      const expDateString = createdAt ? new Date(createdAt).toISOString() : now;
+
       await db.run(
         "INSERT INTO expenses (id, group_id, description, amount, created_by, split_type, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [expenseId, groupId, description.trim(), parsedAmount, paidById, splitType, now]
+        [expenseId, groupId, description.trim(), parsedAmount, paidById, splitType, expDateString]
       );
 
       for (const cs of calculatedSplits) {

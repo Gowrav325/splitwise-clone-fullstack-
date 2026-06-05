@@ -82,11 +82,16 @@ export default function App() {
   const [expenseDescription, setExpenseDescription] = useState("");
   const [expenseAmount, setExpenseAmount] = useState("");
   const [expensePayerId, setExpensePayerId] = useState("");
-  const [expenseSplitType, setExpenseSplitType] = useState<"equal" | "unequal" | "percentage" | "shares font-bold text-teal-805">("equal");
+  const [expenseSplitType, setExpenseSplitType] = useState<"equal" | "unequal" | "percentage" | "shares">("equal");
   const [expenseTargetGroupId, setExpenseTargetGroupId] = useState("");
   const [customSplitRatios, setCustomSplitRatios] = useState<Record<string, string>>({});
   const [splitInvolvedUsers, setSplitInvolvedUsers] = useState<Record<string, boolean>>({});
   const [expenseError, setExpenseError] = useState("");
+  const [expenseDate, setExpenseDate] = useState("");
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanningMessage, setScanningMessage] = useState("");
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Settlement Form State
   const [isSettlingOpen, setIsSettlingOpen] = useState(false);
@@ -469,6 +474,7 @@ export default function App() {
     setExpenseAmount("");
     setExpenseSplitType("equal");
     setExpenseTargetGroupId(selectedGroup?.id || groups[0]?.id || "");
+    setExpenseDate(new Date().toISOString().split('T')[0]);
     setExpenseError("");
     
     // Setup target structure
@@ -609,6 +615,7 @@ export default function App() {
           paidById: expensePayerId,
           splitType: expenseSplitType,
           splits: splitsPayload,
+          createdAt: expenseDate || undefined,
         }),
       });
 
@@ -626,6 +633,96 @@ export default function App() {
       }
     } catch (err: any) {
       setExpenseError("API Error: " + err.message);
+    }
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsScanning(true);
+    setScanningMessage("Uploading receipt image...");
+
+    try {
+      if (file.size > 10 * 1024 * 1024) {
+        throw new Error("File size exceeds 10MB limit.");
+      }
+
+      const reader = new FileReader();
+      const base64Promise = new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = (err) => reject(err);
+      });
+
+      reader.readAsDataURL(file);
+      const dataUri = await base64Promise;
+
+      setScanningMessage("Analyzing receipt with Gemini AI model...");
+
+      const scanRes = await fetch("/api/scan-receipt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageBase64: dataUri,
+          mimeType: file.type,
+        }),
+      });
+
+      let scanData: any;
+      try {
+        scanData = await scanRes.json();
+      } catch (parseErr) {
+        throw new Error(`The server returned an unexpected response format (${scanRes.status} ${scanRes.statusText}). The uploaded image might be too large or there was a connection timeout.`);
+      }
+
+      if (!scanRes.ok) {
+        throw new Error(scanData?.error || "Scanning failed.");
+      }
+
+      const { merchant, amount, date } = scanData.result;
+
+      // Auto-fill the form and keep it open for user's review and confirmation
+      setIsAddExpenseOpen(true);
+      setExpensePayerId(currentUser?.id || "");
+      setExpenseDescription(merchant || "");
+      setExpenseAmount(amount ? String(amount) : "");
+      if (date) {
+        setExpenseDate(date);
+      } else {
+        setExpenseDate(new Date().toISOString().split('T')[0]);
+      }
+      setExpenseSplitType("equal");
+      
+      const targetGroupId = selectedGroup?.id || groups[0]?.id || "";
+      setExpenseTargetGroupId(targetGroupId);
+      setExpenseError("");
+
+      // Automatically updates target group splitting structures
+      if (targetGroupId) {
+        const res = await fetch(`/api/groups/${targetGroupId}`);
+        if (res.ok) {
+          const data = await res.json();
+          const members: Member[] = data.members || [];
+          const initialStates: Record<string, boolean> = {};
+          const initialRatios: Record<string, string> = {};
+          members.forEach((m) => {
+            initialStates[m.id] = true;
+            initialRatios[m.id] = "";
+          });
+          setSplitInvolvedUsers(initialStates);
+          setCustomSplitRatios(initialRatios);
+        }
+      }
+
+      setScanningMessage("");
+    } catch (err: any) {
+      console.error(err);
+      alert("Receipt Scan Error: " + err.message);
+    } finally {
+      setIsScanning(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
     }
   };
 
@@ -1044,6 +1141,22 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#F6F6F6] font-sans flex flex-col text-slate-800 select-none">
+      {isScanning && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-6 shadow-xl max-w-sm w-full mx-4 text-center border border-slate-100 flex flex-col items-center">
+            <div className="h-12 w-12 rounded-full bg-violet-100 flex items-center justify-center mb-4 animate-bounce">
+              <DollarSign className="h-6 w-6 text-violet-600" />
+            </div>
+            <h3 className="text-lg font-black text-slate-800">Scanning with Gemini AI</h3>
+            <p className="text-sm text-slate-500 mt-2">{scanningMessage}</p>
+            <div className="mt-4 flex items-center justify-center gap-1.5">
+              <span className="h-2 w-2 rounded-full bg-violet-600 animate-pulse delay-75"></span>
+              <span className="h-2 w-2 rounded-full bg-violet-600 animate-pulse delay-150"></span>
+              <span className="h-2 w-2 rounded-full bg-violet-600 animate-pulse delay-300"></span>
+            </div>
+          </div>
+        </div>
+      )}
       
       {/* 1. AUTHENTIC SPLITWISE HEADER BAR */}
       <header className="bg-white border-b border-[#E0E0E0] sticky top-0 z-40">
@@ -1242,6 +1355,20 @@ export default function App() {
 
               {/* Action buttons mirroring classic Splitwise style */}
               <div className="flex gap-1.5 self-center">
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleFileChange}
+                  accept="image/*"
+                  className="hidden"
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="bg-violet-600 hover:bg-violet-700 text-white text-xs font-black px-3.5 py-1.5 rounded-lg shadow-sm font-display cursor-pointer transition-colors"
+                  disabled={isScanning}
+                >
+                  Scan Receipt
+                </button>
                 <button
                   onClick={handleAddExpenseClick}
                   className="bg-splitwise-orange hover:bg-[#e45a27] text-white text-xs font-black px-3.5 py-1.5 rounded-lg shadow-sm font-display cursor-pointer transition-colors"
@@ -1878,7 +2005,7 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
                   <div>
                     <label className="block text-xs font-semibold text-slate-650">Paid by</label>
                     <select
@@ -1907,6 +2034,17 @@ export default function App() {
                       <option value="percentage">Proportionate Percentage (%)</option>
                       <option value="shares">Multiple Shares ratio</option>
                     </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-650 font-sans">Expense Date</label>
+                    <input
+                      type="date"
+                      value={expenseDate}
+                      onChange={(e) => setExpenseDate(e.target.value)}
+                      className="mt-1 block w-full py-1.5 px-2.5 border border-slate-350 rounded-lg text-xs bg-slate-50 focus:bg-white focus:outline-none focus:border-splitwise-mint text-slate-700 font-semibold"
+                      required
+                    />
                   </div>
                 </div>
 
